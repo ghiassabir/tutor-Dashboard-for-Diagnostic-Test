@@ -37,7 +37,7 @@
         .kpi-card .title { font-size: 1rem; color: #6c757d; margin-bottom: 0.5rem; }
         .kpi-card .value { font-size: 2rem; font-weight: bold; color: #2a5266; }
 
-        /* Table Styling */
+        /* Table and Section Styling */
         .results-section {
             background-color: #ffffff;
             border-radius: 8px;
@@ -61,6 +61,30 @@
         tbody tr:nth-child(even) { background-color: #f8f9fa; }
         tbody tr:hover { background-color: #e0e7ff; }
         .loader { text-align: center; padding: 2rem; font-size: 1.2rem; color: #6c757d; }
+        
+        /* "Most Wrong" Question Styling */
+        #wrong-questions-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 1.5rem;
+        }
+        .wrong-questions-module {
+            background-color: #fafafa;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            overflow: hidden;
+        }
+        .wrong-questions-module ol { list-style-type: none; padding: 0; margin: 0; }
+        .wrong-questions-module li {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #eee;
+        }
+        .wrong-questions-module li:last-child { border-bottom: none; }
+        .wrong-count { font-weight: bold; color: #bb2d3b; }
+
     </style>
 </head>
 <body>
@@ -91,6 +115,12 @@
             </div>
         </section>
 
+        <!-- New Section for "Most Wrong" Questions -->
+        <section id="class-analysis-section" class="results-section" style="display:none;">
+            <div class="results-header">Class-Wide "Most Wrong" Questions</div>
+            <div id="wrong-questions-container"></div>
+        </section>
+
         <div id="loader" class="loader"><p>Loading class data...</p></div>
 
     </main>
@@ -104,10 +134,10 @@
         const TARGET_TEST_NUMBER = 0; 
 
         const MODULES = {
-            "DT-T0-RW-M1": { type: "RW", total: 27 },
-            "DT-T0-RW-M2": { type: "RW", total: 27 },
-            "DT-T0-MT-M1": { type: "Math", total: 22 },
-            "DT-T0-MT-M2": { type: "Math", total: 22 },
+            "DT-T0-RW-M1": { name: "English Module 1", type: "RW", total: 27 },
+            "DT-T0-RW-M2": { name: "English Module 2", type: "RW", total: 27 },
+            "DT-T0-MT-M1": { name: "Math Module 1", type: "Math", total: 22 },
+            "DT-T0-MT-M2": { name: "Math Module 2", type: "Math", total: 22 },
         };
 
         // --- HELPER FUNCTIONS ---
@@ -164,7 +194,6 @@
 
         // --- MAIN LOGIC ---
         try {
-            // 1. Fetch all data files concurrently
             const [submissionsRes, scoringRes] = await Promise.all([
                 fetch(SUBMISSIONS_CSV_URL),
                 fetch(SCORING_TABLE_URL)
@@ -179,37 +208,41 @@
             const scoringTable = processScoringData(scoringArray);
             const allSubmissions = parseCSV(csvText);
 
-            // 2. De-duplicate Submissions by keeping only the last attempt for each question per student
             const uniqueSubmissionsMap = new Map();
             allSubmissions.forEach(row => {
-                // The key is now based on the QUESTION, not the module
                 const key = `${row.student_gmail_id}|${row.question_id}`;
                 uniqueSubmissionsMap.set(key, row);
             });
             const deDuplicatedSubmissions = Array.from(uniqueSubmissionsMap.values());
 
-            // 3. Calculate RAW scores per student from the clean, de-duplicated data
             const studentRawScores = {};
+            const questionStats = {};
+
             deDuplicatedSubmissions.forEach(row => {
                 const email = row.student_gmail_id;
                 const quizName = row.quiz_name;
+                const questionId = row.question_id;
                 const isCorrect = row.is_correct === 'TRUE';
 
-                if (!email || !quizName || !MODULES[quizName]) return;
+                if (!email || !quizName || !MODULES[quizName] || !questionId) return;
 
-                // Initialize student if not seen before
                 if (!studentRawScores[email]) {
                     studentRawScores[email] = { RW: 0, Math: 0 };
                 }
 
-                // If the answer is correct, find the subject (RW or Math) and increment the score.
                 if (isCorrect) {
                     const subject = MODULES[quizName].type;
                     studentRawScores[email][subject]++;
                 }
+                
+                if (!questionStats[questionId]) {
+                    questionStats[questionId] = { wrong: 0, moduleName: MODULES[quizName].name };
+                }
+                if (!isCorrect) {
+                    questionStats[questionId].wrong++;
+                }
             });
             
-            // 4. Calculate SCALED scores and create final results array
             const studentResults = Object.keys(studentRawScores).map(email => {
                 const raw = studentRawScores[email];
                 const scaledRw = getScaledScore(raw.RW, 'RW', scoringTable);
@@ -225,18 +258,35 @@
                 };
             });
 
-            // 5. Calculate Class-level KPIs (Average Scaled Scores)
             const totalStudents = studentResults.length;
             const avgRwScaled = Math.round(studentResults.reduce((sum, s) => sum + s.scaled_rw, 0) / totalStudents);
             const avgMathScaled = Math.round(studentResults.reduce((sum, s) => sum + s.scaled_math, 0) / totalStudents);
             const avgTotalScaled = Math.round(studentResults.reduce((sum, s) => sum + s.total_scaled, 0) / totalStudents);
+            
+            // Analyze and Sort "Most Wrong" Questions
+            const wrongQuestionsByModule = {};
+            for (const qId in questionStats) {
+                const stat = questionStats[qId];
+                if (!wrongQuestionsByModule[stat.moduleName]) {
+                    wrongQuestionsByModule[stat.moduleName] = [];
+                }
+                wrongQuestionsByModule[stat.moduleName].push({
+                    id: qId.split('-').pop(), // Extracts 'Q1', 'Q2', etc.
+                    wrongCount: stat.wrong
+                });
+            }
+            for(const moduleName in wrongQuestionsByModule) {
+                wrongQuestionsByModule[moduleName].sort((a,b) => b.wrongCount - a.wrongCount);
+            }
 
-            // 6. Render Page
+            // Render Page
             renderKPIs(totalStudents, avgRwScaled, avgMathScaled, avgTotalScaled);
             renderStudentTable(studentResults);
+            renderWrongQuestions(wrongQuestionsByModule);
 
             document.getElementById('loader').style.display = 'none';
             document.getElementById('student-results-section').style.display = 'block';
+            document.getElementById('class-analysis-section').style.display = 'block';
 
         } catch (error) {
             console.error("Error loading or processing data:", error);
@@ -257,9 +307,7 @@
         function renderStudentTable(data) {
             const tableBody = document.getElementById('results-body');
             tableBody.innerHTML = '';
-            // Sort by total scaled score, highest first
             data.sort((a,b) => b.total_scaled - a.total_scaled);
-
             data.forEach(student => {
                 const row = document.createElement('tr');
                 row.innerHTML = `
@@ -271,6 +319,25 @@
                     <td>${student.raw_math} / 44</td>
                 `;
                 tableBody.appendChild(row);
+            });
+        }
+
+        function renderWrongQuestions(data) {
+            const container = document.getElementById('wrong-questions-container');
+            container.innerHTML = '';
+            const moduleOrder = ["English Module 1", "English Module 2", "Math Module 1", "Math Module 2"];
+            moduleOrder.forEach(moduleName => {
+                if (data[moduleName]) {
+                    const moduleDiv = document.createElement('div');
+                    moduleDiv.className = 'wrong-questions-module';
+                    let listHtml = `<div class="results-header">${moduleName}</div><ol>`;
+                    data[moduleName].slice(0, 10).forEach(q => { // Show top 10
+                        listHtml += `<li><span>${q.id}</span> <span class="wrong-count">${q.wrongCount} students</span></li>`;
+                    });
+                    listHtml += '</ol>';
+                    moduleDiv.innerHTML = listHtml;
+                    container.appendChild(moduleDiv);
+                }
             });
         }
     });
