@@ -99,10 +99,9 @@
     document.addEventListener('DOMContentLoaded', async () => {
 
         // --- CONFIGURATION ---
-        const SUBMISSIONS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSxW6lYLIfH1r9954znKNbcE90y5qit38yhhyhZnTv_pMCM46H6DdFzQ5ekkJbqtAwfwVBbNegOVzmU/pub?gid=0&single=true&output=csv';
-        // ACTION REQUIRED: Add the "Raw" URL for your scoring JSON file here.
-        const SCORING_TABLE_URL = 'https://raw.githubusercontent.com/ghiassabir/Student-dashboard-with-real-data-v1/refs/heads/Diagnostic-Dashboard/scoring/Raw_to_Scaled_Conversion_table_RW.json';
-        const TARGET_TEST_NUMBER = 0; // The test number to use for scoring (e.g., 0, 4, 5)
+        const SUBMISSIONS_CSV_URL = 'https://gist.githubusercontent.com/Gemini-User/a2d3989c9d4695b1219c63c5d6e2c39e/raw/6659c82c3c690225881024b4594266c28f742217/sample-student-submissions.csv';
+        const SCORING_TABLE_URL = 'https://raw.githubusercontent.com/YourUsername/YourRepo/main/data/sat-scoring-tables.json';
+        const TARGET_TEST_NUMBER = 0; 
 
         const MODULES = {
             "DT-T0-RW-M1": { type: "RW", total: 27 },
@@ -180,15 +179,16 @@
             const scoringTable = processScoringData(scoringArray);
             const allSubmissions = parseCSV(csvText);
 
-            // 2. De-duplicate submissions
+            // 2. De-duplicate Submissions by keeping only the last attempt for each question per student
             const uniqueSubmissionsMap = new Map();
             allSubmissions.forEach(row => {
-                const key = `${row.student_gmail_id}|${row.quiz_name}`;
+                // The key is now based on the QUESTION, not the module
+                const key = `${row.student_gmail_id}|${row.question_id}`;
                 uniqueSubmissionsMap.set(key, row);
             });
             const deDuplicatedSubmissions = Array.from(uniqueSubmissionsMap.values());
 
-            // 3. Calculate RAW scores per student
+            // 3. Calculate RAW scores per student from the clean, de-duplicated data
             const studentRawScores = {};
             deDuplicatedSubmissions.forEach(row => {
                 const email = row.student_gmail_id;
@@ -197,10 +197,12 @@
 
                 if (!email || !quizName || !MODULES[quizName]) return;
 
+                // Initialize student if not seen before
                 if (!studentRawScores[email]) {
                     studentRawScores[email] = { RW: 0, Math: 0 };
                 }
 
+                // If the answer is correct, find the subject (RW or Math) and increment the score.
                 if (isCorrect) {
                     const subject = MODULES[quizName].type;
                     studentRawScores[email][subject]++;
@@ -225,9 +227,9 @@
 
             // 5. Calculate Class-level KPIs (Average Scaled Scores)
             const totalStudents = studentResults.length;
-            const avgRwScaled = (studentResults.reduce((sum, s) => sum + s.scaled_rw, 0) / totalStudents).toFixed(0);
-            const avgMathScaled = (studentResults.reduce((sum, s) => sum + s.scaled_math, 0) / totalStudents).toFixed(0);
-            const avgTotalScaled = (studentResults.reduce((sum, s) => sum + s.total_scaled, 0) / totalStudents).toFixed(0);
+            const avgRwScaled = Math.round(studentResults.reduce((sum, s) => sum + s.scaled_rw, 0) / totalStudents);
+            const avgMathScaled = Math.round(studentResults.reduce((sum, s) => sum + s.scaled_math, 0) / totalStudents);
+            const avgTotalScaled = Math.round(studentResults.reduce((sum, s) => sum + s.total_scaled, 0) / totalStudents);
 
             // 6. Render Page
             renderKPIs(totalStudents, avgRwScaled, avgMathScaled, avgTotalScaled);
