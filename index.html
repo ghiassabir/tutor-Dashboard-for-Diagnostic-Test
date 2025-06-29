@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tutor Diagnostic Dashboard</title>
+    <style>
+        /* General Styling */
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            line-height: 1.6; 
+            color: #333; 
+            background-color: #f4f7f6;
+            max-width: 1200px; 
+            margin: 20px auto; 
+            padding: 0 20px;
+        }
+        /* Header Styling */
+        header { text-align: center; margin-bottom: 2rem; }
+        header h1 { color: #2a5266; }
+
+        /* KPI Card Styling */
+        #kpi-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 2rem;
+        }
+        .kpi-card {
+            background-color: #ffffff;
+            border: 1px solid #e0e0e0;
+            border-left: 5px solid #2a5266;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .kpi-card .title { font-size: 1rem; color: #6c757d; margin-bottom: 0.5rem; }
+        .kpi-card .value { font-size: 2rem; font-weight: bold; color: #2a5266; }
+
+        /* Table Styling */
+        #results-container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            overflow-x: auto;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f8f9fa; font-weight: bold; cursor: pointer; user-select: none; }
+        th:hover { background-color: #e9ecef; }
+        tbody tr:nth-child(even) { background-color: #f8f9fa; }
+        tbody tr:hover { background-color: #e0e7ff; }
+        .loader { text-align: center; padding: 2rem; font-size: 1.2rem; color: #6c757d; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Diagnostic Test - Tutor Dashboard</h1>
+    </header>
+
+    <main>
+        <section id="kpi-container">
+            <!-- KPI cards will be dynamically generated here -->
+        </section>
+
+        <section id="results-container">
+            <div id="loader" class="loader">
+                <p>Loading class data...</p>
+            </div>
+            <table id="results-table" style="display:none;">
+                <thead>
+                    <tr>
+                        <th data-sort="student_gmail_id">Student Email</th>
+                        <th data-sort="rw_score">English Score (Raw)</th>
+                        <th data-sort="math_score">Math Score (Raw)</th>
+                        <th data-sort="total_score">Total Score (Raw)</th>
+                        <th data-sort="completion">Completion</th>
+                    </tr>
+                </thead>
+                <tbody id="results-body">
+                    <!-- Student results will be dynamically generated here -->
+                </tbody>
+            </table>
+        </section>
+    </main>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+
+        // --- CONFIGURATION ---
+        // ACTION REQUIRED: Replace this placeholder URL with the actual "Raw" URL of your student-submissions.csv file.
+        const SUBMISSIONS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSxW6lYLIfH1r9954znKNbcE90y5qit38yhhyhZnTv_pMCM46H6DdFzQ5ekkJbqtAwfwVBbNegOVzmU/pub?gid=0&single=true&output=csv';
+        const MODULE_PREFIX = 'DT-T0-';
+        const ENGLISH_MODULES = ['RW-M1', 'RW-M2'];
+        const MATH_MODULES = ['MT-M1', 'MT-M2'];
+
+        // --- HELPER: ROBUST CSV PARSER ---
+        function parseCSV(text) {
+            let lines = text.split('\n');
+            const headers = lines[0].split(',').map(h => h.trim());
+            const result = [];
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i]) continue;
+                const obj = {};
+                let values = [];
+                let current_value = '';
+                let in_quotes = false;
+                for (const char of lines[i]) {
+                    if (char === '"' && in_quotes) in_quotes = false;
+                    else if (char === '"' && !in_quotes) in_quotes = true;
+                    else if (char === ',' && !in_quotes) {
+                        values.push(current_value.trim());
+                        current_value = '';
+                    } else {
+                        current_value += char;
+                    }
+                }
+                values.push(current_value.trim());
+                for (let j = 0; j < headers.length; j++) {
+                    let value = values[j] || '';
+                    if (value.startsWith('"') && value.endsWith('"')) value = value.substring(1, value.length - 1);
+                    obj[headers[j]] = value;
+                }
+                result.push(obj);
+            }
+            return result;
+        }
+
+        // --- MAIN LOGIC ---
+        try {
+            // 1. Fetch and parse data
+            const response = await fetch(SUBMISSIONS_CSV_URL);
+            if (!response.ok) throw new Error(`Failed to fetch data. Status: ${response.status}`);
+            const csvText = await response.text();
+            const allSubmissions = parseCSV(csvText);
+
+            // 2. Process Submissions: Group by student and handle duplicates
+            const studentData = {};
+            allSubmissions.forEach(row => {
+                const email = row.student_gmail_id;
+                const quizName = row.quiz_name;
+                
+                if (!email || !quizName) return; // Skip rows without email or quiz name
+
+                // Initialize student if not seen before
+                if (!studentData[email]) {
+                    studentData[email] = {
+                        submissions: new Map(), // Use a Map to easily handle duplicates
+                        scores: { rw: 0, math: 0 }
+                    };
+                }
+
+                // Store the latest submission for each quiz module
+                studentData[email].submissions.set(quizName, row.is_correct === 'TRUE');
+            });
+
+            // 3. Calculate Scores for each student
+            const studentResults = [];
+            for (const email in studentData) {
+                const data = studentData[email];
+                let rwScore = 0;
+                let mathScore = 0;
+                let modulesCompleted = 0;
+
+                data.submissions.forEach((isCorrect, quizName) => {
+                    if (isCorrect) {
+                        if (ENGLISH_MODULES.some(m => quizName.includes(m))) rwScore++;
+                        if (MATH_MODULES.some(m => quizName.includes(m))) mathScore++;
+                    }
+                    if (quizName.startsWith(MODULE_PREFIX)) {
+                        modulesCompleted++;
+                    }
+                });
+
+                studentResults.push({
+                    student_gmail_id: email,
+                    rw_score: rwScore,
+                    math_score: mathScore,
+                    total_score: rwScore + mathScore,
+                    completion: `${modulesCompleted}/4 Modules`
+                });
+            }
+            
+            // 4. Calculate Class-level KPIs
+            const totalStudents = studentResults.length;
+            const avgRwScore = (studentResults.reduce((sum, s) => sum + s.rw_score, 0) / totalStudents).toFixed(1);
+            const avgMathScore = (studentResults.reduce((sum, s) => sum + s.math_score, 0) / totalStudents).toFixed(1);
+            const avgTotalScore = (studentResults.reduce((sum, s) => sum + s.total_score, 0) / totalStudents).toFixed(1);
+
+            // 5. Render Page
+            renderKPIs(totalStudents, avgRwScore, avgMathScore, avgTotalScore);
+            renderTable(studentResults);
+
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('results-table').style.display = 'table';
+
+        } catch (error) {
+            console.error("Error loading or processing data:", error);
+            document.getElementById('loader').innerHTML = `<p style="color:red;">Error: ${error.message}</p>`;
+        }
+        
+        // --- RENDER FUNCTIONS ---
+        function renderKPIs(total, rw, math, totalAvg) {
+            const container = document.getElementById('kpi-container');
+            container.innerHTML = `
+                <div class="kpi-card"><div class="title">Total Students</div><div class="value">${total}</div></div>
+                <div class="kpi-card"><div class="title">Avg. English Score</div><div class="value">${rw}</div></div>
+                <div class="kpi-card"><div class="title">Avg. Math Score</div><div class="value">${math}</div></div>
+                <div class="kpi-card"><div class="title">Avg. Total Score</div><div class="value">${totalAvg}</div></div>
+            `;
+        }
+
+        function renderTable(data) {
+            const tableBody = document.getElementById('results-body');
+            tableBody.innerHTML = ''; // Clear previous data
+            data.forEach(student => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${student.student_gmail_id}</td>
+                    <td>${student.rw_score} / 27</td>
+                    <td>${student.math_score} / 22</td>
+                    <td>${student.total_score} / 49</td>
+                    <td>${student.completion}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+    });
+    </script>
+</body>
+</html>
