@@ -174,11 +174,20 @@
             const csvText = await response.text();
             const allSubmissions = parseCSV(csvText);
 
-            // 2. Process data for both student scores and class-wide analysis
+            // 2. De-duplicate Submissions: Process all rows to keep only the last attempt for each student-module pair.
+            const uniqueSubmissionsMap = new Map();
+            allSubmissions.forEach(row => {
+                const key = `${row.student_gmail_id}|${row.quiz_name}`;
+                uniqueSubmissionsMap.set(key, row); // The map will automatically overwrite earlier entries with later ones.
+            });
+            const deDuplicatedSubmissions = Array.from(uniqueSubmissionsMap.values());
+
+
+            // 3. Process De-duplicated Data for student scores and question stats
             const studentData = {};
             const questionStats = {};
 
-            allSubmissions.forEach(row => {
+            deDuplicatedSubmissions.forEach(row => {
                 const email = row.student_gmail_id;
                 const quizName = row.quiz_name;
                 const questionId = row.question_id;
@@ -187,54 +196,33 @@
                 if (!email || !quizName || !questionId) return;
 
                 // Initialize student if not seen before
-                if (!studentData[email]) studentData[email] = { submissions: new Map() };
-                studentData[email].submissions.set(quizName, row); // Store latest submission for the module
+                if (!studentData[email]) {
+                    studentData[email] = { "Eng Mod 1": 0, "Eng Mod 2": 0, "Math Mod 1": 0, "Math Mod 2": 0, "total": 0 };
+                }
 
-                // Initialize question stat if not seen before
-                if (!questionStats[questionId]) questionStats[questionId] = { wrong: 0, total: 0 };
-                questionStats[questionId].total++;
+                // Increment score for the correct module
+                if (isCorrect && MODULES[quizName]) {
+                    const moduleShortName = MODULES[quizName].name;
+                    studentData[email][moduleShortName]++;
+                    studentData[email].total++;
+                }
+
+                // Tally stats for "Most Wrong" questions
+                if (!questionStats[questionId]) questionStats[questionId] = { wrong: 0 };
                 if (!isCorrect) questionStats[questionId].wrong++;
             });
+            
+            // 4. Convert studentData object to an array for easy rendering
+            const studentResults = Object.keys(studentData).map(email => ({
+                email, ...studentData[email]
+            }));
 
-            // 3. Calculate Scores for each student
-            const studentResults = Object.keys(studentData).map(email => {
-                const data = studentData[email];
-                const result = { email };
-                let totalScore = 0;
-
-                for (const quizId in MODULES) {
-                    const submission = data.submissions.get(quizId);
-                    result[MODULES[quizId].name] = submission && submission.is_correct === 'TRUE' ? 1 : 0;
-                }
-
-                // Sum up scores per module
-                for (const quizId in MODULES) {
-                    const moduleName = MODULES[quizId].name;
-                    let moduleScore = 0;
-                    data.submissions.forEach((sub, submittedQuizId) => {
-                         if (submittedQuizId === quizId && sub.is_correct === 'TRUE') {
-                            moduleScore++;
-                         }
-                    });
-                    result[moduleName] = moduleScore;
-                    totalScore += moduleScore;
-                }
-                result.total = totalScore;
-                return result;
-            });
-
-            // 4. Calculate Class-level KPIs
+            // 5. Calculate Corrected Class-level KPIs (Total Correct Answers, not Average)
             const totalStudents = studentResults.length;
-            let totalRwScore = 0, totalMathScore = 0;
-            studentResults.forEach(s => {
-                totalRwScore += s["Eng Mod 1"] + s["Eng Mod 2"];
-                totalMathScore += s["Math Mod 1"] + s["Math Mod 2"];
-            });
-            const avgRwScore = (totalRwScore / totalStudents).toFixed(1);
-            const avgMathScore = (totalMathScore / totalStudents).toFixed(1);
-            const avgTotalScore = ((totalRwScore + totalMathScore) / totalStudents).toFixed(1);
-
-            // 5. Analyze and Sort "Most Wrong" Questions
+            const totalRwCorrect = studentResults.reduce((sum, s) => sum + s["Eng Mod 1"] + s["Eng Mod 2"], 0);
+            const totalMathCorrect = studentResults.reduce((sum, s) => sum + s["Math Mod 1"] + s["Math Mod 2"], 0);
+            
+            // 6. Analyze and Sort "Most Wrong" Questions from the de-duplicated stats
             const wrongQuestionsByModule = {};
             for (const qId in questionStats) {
                 const quizName = qId.substring(0, qId.lastIndexOf('-'));
@@ -251,8 +239,8 @@
                 wrongQuestionsByModule[moduleName].sort((a,b) => b.wrongCount - a.wrongCount);
             }
 
-            // 6. Render Page
-            renderKPIs(totalStudents, avgRwScore, avgMathScore, avgTotalScore);
+            // 7. Render Page
+            renderKPIs(totalStudents, totalRwCorrect, totalMathCorrect);
             renderStudentTable(studentResults);
             renderWrongQuestions(wrongQuestionsByModule);
 
@@ -266,13 +254,12 @@
         }
         
         // --- RENDER FUNCTIONS ---
-        function renderKPIs(total, rw, math, totalAvg) {
+        function renderKPIs(totalStudents, totalRw, totalMath) {
             const container = document.getElementById('kpi-container');
             container.innerHTML = `
-                <div class="kpi-card"><div class="title">Total Students</div><div class="value">${total}</div></div>
-                <div class="kpi-card"><div class="title">Avg. English Score</div><div class="value">${rw}</div></div>
-                <div class="kpi-card"><div class="title">Avg. Math Score</div><div class="value">${math}</div></div>
-                <div class="kpi-card"><div class="title">Avg. Total Score</div><div class="value">${totalAvg}</div></div>
+                <div class="kpi-card"><div class="title">Total Students</div><div class="value">${totalStudents}</div></div>
+                <div class="kpi-card"><div class="title">Total Correct (English)</div><div class="value">${totalRw}</div></div>
+                <div class="kpi-card"><div class="title">Total Correct (Math)</div><div class="value">${totalMath}</div></div>
             `;
         }
 
@@ -296,17 +283,21 @@
         function renderWrongQuestions(data) {
             const container = document.getElementById('wrong-questions-container');
             container.innerHTML = '';
-            for(const moduleName in data) {
-                const moduleDiv = document.createElement('div');
-                moduleDiv.className = 'wrong-questions-module';
-                let listHtml = `<div class="results-header">${moduleName}</div><ol>`;
-                data[moduleName].slice(0, 10).forEach(q => { // Show top 10
-                    listHtml += `<li><span>${q.id}</span> <span class="wrong-count">${q.wrongCount} wrong</span></li>`;
-                });
-                listHtml += '</ol>';
-                moduleDiv.innerHTML = listHtml;
-                container.appendChild(moduleDiv);
-            }
+            // Ensure consistent order of modules
+            const moduleOrder = ["Eng Mod 1", "Eng Mod 2", "Math Mod 1", "Math Mod 2"];
+            moduleOrder.forEach(moduleName => {
+                if (data[moduleName]) {
+                    const moduleDiv = document.createElement('div');
+                    moduleDiv.className = 'wrong-questions-module';
+                    let listHtml = `<div class="results-header">${moduleName}</div><ol>`;
+                    data[moduleName].slice(0, 10).forEach(q => { // Show top 10
+                        listHtml += `<li><span>${q.id}</span> <span class="wrong-count">${q.wrongCount} wrong</span></li>`;
+                    });
+                    listHtml += '</ol>';
+                    moduleDiv.innerHTML = listHtml;
+                    container.appendChild(moduleDiv);
+                }
+            });
         }
     });
     </script>
