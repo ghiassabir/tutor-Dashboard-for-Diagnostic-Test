@@ -38,19 +38,51 @@
         .kpi-card .value { font-size: 2rem; font-weight: bold; color: #2a5266; }
 
         /* Table Styling */
-        #results-container {
+        .results-section {
             background-color: #ffffff;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            overflow-x: auto;
+            overflow: hidden;
+            margin-bottom: 2rem;
         }
+        .results-header {
+            padding: 1rem 1.5rem;
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #ddd;
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #333;
+        }
+        .table-wrapper { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background-color: #f8f9fa; font-weight: bold; cursor: pointer; user-select: none; }
-        th:hover { background-color: #e9ecef; }
+        th, td { padding: 1rem 1.5rem; text-align: left; border-bottom: 1px solid #ddd; white-space: nowrap; }
+        th { background-color: #f8f9fa; font-weight: bold; }
+        tbody tr:last-child td { border-bottom: none; }
         tbody tr:nth-child(even) { background-color: #f8f9fa; }
         tbody tr:hover { background-color: #e0e7ff; }
         .loader { text-align: center; padding: 2rem; font-size: 1.2rem; color: #6c757d; }
+
+        /* Most Wrong Questions Styling */
+        #wrong-questions-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        .wrong-questions-module {
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+        .wrong-questions-module ol { list-style-type: none; padding: 0; margin: 0; }
+        .wrong-questions-module li {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 1.5rem;
+            border-bottom: 1px solid #eee;
+        }
+        .wrong-questions-module li:last-child { border-bottom: none; }
+        .wrong-count { font-weight: bold; color: #bb2d3b; }
     </style>
 </head>
 <body>
@@ -60,44 +92,52 @@
     </header>
 
     <main>
-        <section id="kpi-container">
-            <!-- KPI cards will be dynamically generated here -->
+        <section id="kpi-container"></section>
+
+        <section id="student-results-section" class="results-section" style="display:none;">
+            <div class="results-header">Student Scores by Module</div>
+            <div class="table-wrapper">
+                <table id="results-table">
+                    <thead>
+                        <tr>
+                            <th>Student Email</th>
+                            <th>Eng Mod 1</th>
+                            <th>Eng Mod 2</th>
+                            <th>Math Mod 1</th>
+                            <th>Math Mod 2</th>
+                            <th>Total</th>
+                        </tr>
+                    </thead>
+                    <tbody id="results-body"></tbody>
+                </table>
+            </div>
+        </section>
+        
+        <section id="class-analysis-section" class="results-section" style="display:none;">
+            <div class="results-header">Class-Wide "Most Wrong" Questions</div>
+            <div id="wrong-questions-container"></div>
         </section>
 
-        <section id="results-container">
-            <div id="loader" class="loader">
-                <p>Loading class data...</p>
-            </div>
-            <table id="results-table" style="display:none;">
-                <thead>
-                    <tr>
-                        <th data-sort="student_gmail_id">Student Email</th>
-                        <th data-sort="rw_score">English Score (Raw)</th>
-                        <th data-sort="math_score">Math Score (Raw)</th>
-                        <th data-sort="total_score">Total Score (Raw)</th>
-                        <th data-sort="completion">Completion</th>
-                    </tr>
-                </thead>
-                <tbody id="results-body">
-                    <!-- Student results will be dynamically generated here -->
-                </tbody>
-            </table>
-        </section>
+        <div id="loader" class="loader"><p>Loading class data...</p></div>
+
     </main>
 
     <script>
     document.addEventListener('DOMContentLoaded', async () => {
 
         // --- CONFIGURATION ---
-        // ACTION REQUIRED: Replace this placeholder URL with the actual "Raw" URL of your student-submissions.csv file.
-        const SUBMISSIONS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSxW6lYLIfH1r9954znKNbcE90y5qit38yhhyhZnTv_pMCM46H6DdFzQ5ekkJbqtAwfwVBbNegOVzmU/pub?gid=0&single=true&output=csv';
-        const MODULE_PREFIX = 'DT-T0-';
-        const ENGLISH_MODULES = ['RW-M1', 'RW-M2'];
-        const MATH_MODULES = ['MT-M1', 'MT-M2'];
+        const SUBMISSIONS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSxW6lYLIfH1r9954znKNbcE90y5qit38yhhyhZnTv_pMCM46H6DdFzQ5ekkJbqtAwfwVBbNegOVzmU/pub?gid=0&single=true&output=csv
+';
+        const MODULES = {
+            "DT-T0-RW-M1": { name: "Eng Mod 1", type: "RW", total: 27 },
+            "DT-T0-RW-M2": { name: "Eng Mod 2", type: "RW", total: 27 },
+            "DT-T0-MT-M1": { name: "Math Mod 1", type: "Math", total: 22 },
+            "DT-T0-MT-M2": { name: "Math Mod 2", type: "Math", total: 22 },
+        };
 
         // --- HELPER: ROBUST CSV PARSER ---
         function parseCSV(text) {
-            let lines = text.split('\n');
+            let lines = text.trim().split('\n');
             const headers = lines[0].split(',').map(h => h.trim());
             const result = [];
             for (let i = 1; i < lines.length; i++) {
@@ -135,65 +175,91 @@
             const csvText = await response.text();
             const allSubmissions = parseCSV(csvText);
 
-            // 2. Process Submissions: Group by student and handle duplicates
+            // 2. Process data for both student scores and class-wide analysis
             const studentData = {};
+            const questionStats = {};
+
             allSubmissions.forEach(row => {
                 const email = row.student_gmail_id;
                 const quizName = row.quiz_name;
-                
-                if (!email || !quizName) return; // Skip rows without email or quiz name
+                const questionId = row.question_id;
+                const isCorrect = row.is_correct === 'TRUE';
+
+                if (!email || !quizName || !questionId) return;
 
                 // Initialize student if not seen before
-                if (!studentData[email]) {
-                    studentData[email] = {
-                        submissions: new Map(), // Use a Map to easily handle duplicates
-                        scores: { rw: 0, math: 0 }
-                    };
-                }
+                if (!studentData[email]) studentData[email] = { submissions: new Map() };
+                studentData[email].submissions.set(quizName, row); // Store latest submission for the module
 
-                // Store the latest submission for each quiz module
-                studentData[email].submissions.set(quizName, row.is_correct === 'TRUE');
+                // Initialize question stat if not seen before
+                if (!questionStats[questionId]) questionStats[questionId] = { wrong: 0, total: 0 };
+                questionStats[questionId].total++;
+                if (!isCorrect) questionStats[questionId].wrong++;
             });
 
             // 3. Calculate Scores for each student
-            const studentResults = [];
-            for (const email in studentData) {
+            const studentResults = Object.keys(studentData).map(email => {
                 const data = studentData[email];
-                let rwScore = 0;
-                let mathScore = 0;
-                let modulesCompleted = 0;
+                const result = { email };
+                let totalScore = 0;
 
-                data.submissions.forEach((isCorrect, quizName) => {
-                    if (isCorrect) {
-                        if (ENGLISH_MODULES.some(m => quizName.includes(m))) rwScore++;
-                        if (MATH_MODULES.some(m => quizName.includes(m))) mathScore++;
-                    }
-                    if (quizName.startsWith(MODULE_PREFIX)) {
-                        modulesCompleted++;
-                    }
-                });
+                for (const quizId in MODULES) {
+                    const submission = data.submissions.get(quizId);
+                    result[MODULES[quizId].name] = submission && submission.is_correct === 'TRUE' ? 1 : 0;
+                }
 
-                studentResults.push({
-                    student_gmail_id: email,
-                    rw_score: rwScore,
-                    math_score: mathScore,
-                    total_score: rwScore + mathScore,
-                    completion: `${modulesCompleted}/4 Modules`
-                });
-            }
-            
+                // Sum up scores per module
+                for (const quizId in MODULES) {
+                    const moduleName = MODULES[quizId].name;
+                    let moduleScore = 0;
+                    data.submissions.forEach((sub, submittedQuizId) => {
+                         if (submittedQuizId === quizId && sub.is_correct === 'TRUE') {
+                            moduleScore++;
+                         }
+                    });
+                    result[moduleName] = moduleScore;
+                    totalScore += moduleScore;
+                }
+                result.total = totalScore;
+                return result;
+            });
+
             // 4. Calculate Class-level KPIs
             const totalStudents = studentResults.length;
-            const avgRwScore = (studentResults.reduce((sum, s) => sum + s.rw_score, 0) / totalStudents).toFixed(1);
-            const avgMathScore = (studentResults.reduce((sum, s) => sum + s.math_score, 0) / totalStudents).toFixed(1);
-            const avgTotalScore = (studentResults.reduce((sum, s) => sum + s.total_score, 0) / totalStudents).toFixed(1);
+            let totalRwScore = 0, totalMathScore = 0;
+            studentResults.forEach(s => {
+                totalRwScore += s["Eng Mod 1"] + s["Eng Mod 2"];
+                totalMathScore += s["Math Mod 1"] + s["Math Mod 2"];
+            });
+            const avgRwScore = (totalRwScore / totalStudents).toFixed(1);
+            const avgMathScore = (totalMathScore / totalStudents).toFixed(1);
+            const avgTotalScore = ((totalRwScore + totalMathScore) / totalStudents).toFixed(1);
 
-            // 5. Render Page
+            // 5. Analyze and Sort "Most Wrong" Questions
+            const wrongQuestionsByModule = {};
+            for (const qId in questionStats) {
+                const quizName = qId.substring(0, qId.lastIndexOf('-'));
+                if (MODULES[quizName]) {
+                    const moduleName = MODULES[quizName].name;
+                    if (!wrongQuestionsByModule[moduleName]) wrongQuestionsByModule[moduleName] = [];
+                    wrongQuestionsByModule[moduleName].push({
+                        id: qId.split('-').pop(),
+                        wrongCount: questionStats[qId].wrong
+                    });
+                }
+            }
+            for(const moduleName in wrongQuestionsByModule) {
+                wrongQuestionsByModule[moduleName].sort((a,b) => b.wrongCount - a.wrongCount);
+            }
+
+            // 6. Render Page
             renderKPIs(totalStudents, avgRwScore, avgMathScore, avgTotalScore);
-            renderTable(studentResults);
+            renderStudentTable(studentResults);
+            renderWrongQuestions(wrongQuestionsByModule);
 
             document.getElementById('loader').style.display = 'none';
-            document.getElementById('results-table').style.display = 'table';
+            document.getElementById('student-results-section').style.display = 'block';
+            document.getElementById('class-analysis-section').style.display = 'block';
 
         } catch (error) {
             console.error("Error loading or processing data:", error);
@@ -211,20 +277,37 @@
             `;
         }
 
-        function renderTable(data) {
+        function renderStudentTable(data) {
             const tableBody = document.getElementById('results-body');
-            tableBody.innerHTML = ''; // Clear previous data
+            tableBody.innerHTML = '';
             data.forEach(student => {
                 const row = document.createElement('tr');
                 row.innerHTML = `
-                    <td>${student.student_gmail_id}</td>
-                    <td>${student.rw_score} / 27</td>
-                    <td>${student.math_score} / 22</td>
-                    <td>${student.total_score} / 49</td>
-                    <td>${student.completion}</td>
+                    <td>${student.email}</td>
+                    <td>${student['Eng Mod 1']} / ${MODULES['DT-T0-RW-M1'].total}</td>
+                    <td>${student['Eng Mod 2']} / ${MODULES['DT-T0-RW-M2'].total}</td>
+                    <td>${student['Math Mod 1']} / ${MODULES['DT-T0-MT-M1'].total}</td>
+                    <td>${student['Math Mod 2']} / ${MODULES['DT-T0-MT-M2'].total}</td>
+                    <td>${student.total} / 98</td>
                 `;
                 tableBody.appendChild(row);
             });
+        }
+
+        function renderWrongQuestions(data) {
+            const container = document.getElementById('wrong-questions-container');
+            container.innerHTML = '';
+            for(const moduleName in data) {
+                const moduleDiv = document.createElement('div');
+                moduleDiv.className = 'wrong-questions-module';
+                let listHtml = `<div class="results-header">${moduleName}</div><ol>`;
+                data[moduleName].slice(0, 10).forEach(q => { // Show top 10
+                    listHtml += `<li><span>${q.id}</span> <span class="wrong-count">${q.wrongCount} wrong</span></li>`;
+                });
+                listHtml += '</ol>';
+                moduleDiv.innerHTML = listHtml;
+                container.appendChild(moduleDiv);
+            }
         }
     });
     </script>
